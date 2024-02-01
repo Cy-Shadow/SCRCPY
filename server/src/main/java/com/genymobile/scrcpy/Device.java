@@ -2,6 +2,7 @@ package com.genymobile.scrcpy;
 
 import com.genymobile.scrcpy.wrappers.ClipboardManager;
 import com.genymobile.scrcpy.wrappers.DisplayControl;
+import com.genymobile.scrcpy.wrappers.DisplayManager;
 import com.genymobile.scrcpy.wrappers.InputManager;
 import com.genymobile.scrcpy.wrappers.ServiceManager;
 import com.genymobile.scrcpy.wrappers.SurfaceControl;
@@ -10,6 +11,8 @@ import com.genymobile.scrcpy.wrappers.WindowManager;
 import android.content.IOnPrimaryClipChangedListener;
 import android.graphics.Rect;
 import android.os.Build;
+import android.os.Handler;
+import android.os.HandlerThread;
 import android.os.IBinder;
 import android.os.SystemClock;
 import android.view.IDisplayFoldListener;
@@ -33,8 +36,8 @@ public final class Device {
     public static final int LOCK_VIDEO_ORIENTATION_UNLOCKED = -1;
     public static final int LOCK_VIDEO_ORIENTATION_INITIAL = -2;
 
-    public interface RotationListener {
-        void onRotationChanged(int rotation);
+    public interface DisplayChangeListener {
+        void onDisplayChanged();
     }
 
     public interface FoldListener {
@@ -51,7 +54,7 @@ public final class Device {
 
     private Size deviceSize;
     private ScreenInfo screenInfo;
-    private RotationListener rotationListener;
+    private DisplayChangeListener displayChangeListener;
     private FoldListener foldListener;
     private ClipboardListener clipboardListener;
     private final AtomicBoolean isSettingClipboard = new AtomicBoolean();
@@ -78,27 +81,44 @@ public final class Device {
 
         int displayInfoFlags = displayInfo.getFlags();
 
-        deviceSize = displayInfo.getSize();
         crop = options.getCrop();
         maxSize = options.getMaxSize();
         lockVideoOrientation = options.getLockVideoOrientation();
 
+        deviceSize = displayInfo.getSize();
         screenInfo = ScreenInfo.computeScreenInfo(displayInfo.getRotation(), deviceSize, crop, maxSize, lockVideoOrientation);
         layerStack = displayInfo.getLayerStack();
 
-        ServiceManager.getWindowManager().registerRotationWatcher(new IRotationWatcher.Stub() {
-            @Override
-            public void onRotationChanged(int rotation) {
-                synchronized (Device.this) {
-                    screenInfo = screenInfo.withDeviceRotation(rotation);
+        HandlerThread displayListenerThread = new HandlerThread("DisplayListenerThread");
+        displayListenerThread.start();
 
-                    // notify
-                    if (rotationListener != null) {
-                        rotationListener.onRotationChanged(rotation);
-                    }
+        Handler displayListenerHandler = new Handler(displayListenerThread.getLooper());
+        ServiceManager.getDisplayManager().registerDisplayListener(new DisplayManager.DisplayListener() {
+            @Override
+            public void onDisplayAdded(int displayId) {
+                // nothing to do
+            }
+
+            @Override
+            public void onDisplayRemoved(int displayId) {
+                // nothing to do
+            }
+
+            @Override
+            public void onDisplayChanged(int displayId) {
+                if (Device.this.displayId != displayId) {
+                    return;
+                }
+
+                DisplayInfo displayInfo = ServiceManager.getDisplayManager().getDisplayInfo(displayId);
+                deviceSize = displayInfo.getSize();
+                screenInfo = ScreenInfo.computeScreenInfo(displayInfo.getRotation(), deviceSize, crop, maxSize, lockVideoOrientation);
+
+                if (displayChangeListener != null) {
+                    displayChangeListener.onDisplayChanged();
                 }
             }
-        }, displayId);
+        }, displayListenerHandler, DisplayManager.EVENT_FLAG_DISPLAY_CHANGED);
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             ServiceManager.getWindowManager().registerDisplayFoldListener(new IDisplayFoldListener.Stub() {
@@ -254,8 +274,8 @@ public final class Device {
         return ServiceManager.getPowerManager().isScreenOn();
     }
 
-    public synchronized void setRotationListener(RotationListener rotationListener) {
-        this.rotationListener = rotationListener;
+    public synchronized void setDisplayChangeListener(DisplayChangeListener displayChangeListener) {
+        this.displayChangeListener = displayChangeListener;
     }
 
     public synchronized void setFoldListener(FoldListener foldlistener) {

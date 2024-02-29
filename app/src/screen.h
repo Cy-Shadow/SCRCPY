@@ -64,6 +64,8 @@ struct sc_screen {
     SDL_Keycode mouse_capture_key_pressed;
 
     AVFrame *frame;
+
+    struct sc_transform transform_offsets;
 };
 
 struct sc_screen_params {
@@ -92,6 +94,11 @@ struct sc_screen_params {
 
     bool fullscreen;
     bool start_fps_counter;
+
+    int16_t rotation_offset;
+    uint16_t scale;
+    int16_t position_x_offset;
+    int16_t position_y_offset;
 };
 
 // initialize screen, create window, renderer and texture (window is hidden)
